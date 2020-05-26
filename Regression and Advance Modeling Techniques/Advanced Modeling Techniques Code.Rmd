@@ -1,0 +1,1183 @@
+---
+title: "stat_707_final_project_code"
+author: "Amanda Mari"
+date: "5/8/2020"
+output: html_document
+---
+
+##Libraries
+```{r, message=FALSE, warning=FALSE}
+library('knitr')
+library('plyr')
+library('tidyverse')
+library('corrplot')
+library('caret')
+library('gridExtra')
+library('scales')
+library('Rmisc')
+library('ggrepel')
+library('randomForest')
+library('psych')
+library('xgboost')
+library('MLmetrics')
+library('Ckmeans.1d.dp')
+library('MASS')
+library('Metrics')
+library('rpart.plot')
+```
+
+##Reading in the "training" and "testing" data sets
+
+```{r}
+train <- read.csv("input/training.csv", stringsAsFactors = F)
+test <- read.csv("input/test.csv", stringsAsFactors = F)
+```
+
+
+```{r}
+dim(train)
+dim(test) 
+```
+
+```{r}
+test$Id <- NULL
+train$Id <- NULL
+```
+
+```{r}
+#saving the true testing price and log of true testing price in separate vectors from the testing set to compare to predictions made later on
+true_test_price <-test$SalePrice   
+true_test_log_price <-log(test$SalePrice)
+test$SalePrice <- NA
+all <- rbind(train, test)
+dim(all)
+```
+
+```{r}
+
+
+all[1:1060,] %>% ggplot(aes(x=GarageArea,y=SalePrice))+geom_point()
+
+```
+
+##Data Cleaning
+
+
+```{r}
+NAcol <- which(colSums(is.na(all)) > 0)
+sort(colSums(sapply(all[NAcol], is.na)), decreasing = TRUE)
+#20 columns have missing values
+```
+
+
+
+```{r}
+all$PoolQC[is.na(all$PoolQC)] <- 'None'
+```
+
+
+
+```{r}
+Qualities <- c('None' = 0, 'Po' = 1, 'Fa' = 2, 'TA' = 3, 'Gd' = 4, 'Ex' = 5)
+```
+
+
+
+```{r, message=FALSE}
+all$PoolQC<-as.integer(revalue(all$PoolQC, Qualities))
+table(all$PoolQC)
+```
+
+
+
+
+```{r}
+all$MiscFeature[is.na(all$MiscFeature)] <- 'None'
+all$MiscFeature <- as.factor(all$MiscFeature)
+
+
+table(all$MiscFeature)
+```
+
+
+```{r}
+all$Alley[is.na(all$Alley)] <- 'None'
+all$Alley <- as.factor(all$Alley)
+
+
+
+table(all$Alley)
+```
+
+
+
+```{r}
+all$Fence[is.na(all$Fence)] <- 'None'
+table(all$Fence)
+all$Fence <- as.factor(all$Fence)
+```
+
+
+```{r}
+all$FireplaceQu[is.na(all$FireplaceQu)] <- 'None'
+all$FireplaceQu<-as.integer(revalue(all$FireplaceQu, Qualities))
+table(all$FireplaceQu)
+```
+
+
+```{r}
+table(all$Fireplaces)
+sum(table(all$Fireplaces))
+```
+
+
+
+
+```{r}
+for (i in 1:nrow(all)){
+        if(is.na(all$LotFrontage[i])){
+               all$LotFrontage[i] <- as.integer(median(all$LotFrontage[all$Neighborhood==all$Neighborhood[i]], na.rm=TRUE)) 
+        }
+}
+```
+
+
+```{r}
+all$LotShape<-as.integer(revalue(all$LotShape, c('IR3'=0, 'IR2'=1, 'IR1'=2, 'Reg'=3)))
+table(all$LotShape)
+sum(table(all$LotShape))
+```
+
+
+```{r}
+all$LotConfig <- as.factor(all$LotConfig)
+table(all$LotConfig)
+sum(table(all$LotConfig))
+```
+
+
+
+```{r}
+all$GarageYrBlt[is.na(all$GarageYrBlt)] <- all$YearBuilt[is.na(all$GarageYrBlt)]
+```
+
+
+```{r}
+
+length(which(is.na(all$GarageType) & is.na(all$GarageFinish) & is.na(all$GarageCond) & is.na(all$GarageQual)))
+
+#81
+
+
+```
+
+
+```{r}
+all$GarageType[is.na(all$GarageType)] <- 'No Garage'
+all$GarageType <- as.factor(all$GarageType)
+table(all$GarageType)
+```
+
+    
+
+```{r}
+all$GarageFinish[is.na(all$GarageFinish)] <- 'None'
+Finish <- c('None'=0, 'Unf'=1, 'RFn'=2, 'Fin'=3)
+
+all$GarageFinish<-as.integer(revalue(all$GarageFinish, Finish))
+table(all$GarageFinish)
+```
+
+
+```{r}
+all$GarageQual[is.na(all$GarageQual)] <- 'None'
+all$GarageQual<-as.integer(revalue(all$GarageQual, Qualities))
+table(all$GarageQual)
+```
+
+
+```{r}
+all$GarageCond[is.na(all$GarageCond)] <- 'None'
+all$GarageCond<-as.integer(revalue(all$GarageCond, Qualities))
+table(all$GarageCond)
+```
+
+
+
+```{r}
+length(which(is.na(all$BsmtQual) & is.na(all$BsmtCond) & is.na(all$BsmtExposure) & is.na(all$BsmtFinType1) & is.na(all$BsmtFinType2)))   #37
+
+#Find the additional NAs
+all[!is.na(all$BsmtFinType1) & (is.na(all$BsmtCond)|is.na(all$BsmtQual)|is.na(all$BsmtExposure)|is.na(all$BsmtFinType2)), c('BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 'BsmtFinType2')]  #2
+```
+
+
+```{r, message=FALSE}
+all$BsmtQual[is.na(all$BsmtQual)] <- 'None'
+all$BsmtQual<-as.integer(revalue(all$BsmtQual, Qualities))
+table(all$BsmtQual)
+```
+		
+
+```{r, message=FALSE}
+all$BsmtCond[is.na(all$BsmtCond)] <- 'None'
+all$BsmtCond<-as.integer(revalue(all$BsmtCond, Qualities))
+table(all$BsmtCond)
+```
+	
+
+
+```{r}
+all$BsmtExposure[is.na(all$BsmtExposure)] <- 'None'
+Exposure <- c('None'=0, 'No'=1, 'Mn'=2, 'Av'=3, 'Gd'=4)
+
+all$BsmtExposure<-as.integer(revalue(all$BsmtExposure, Exposure))
+table(all$BsmtExposure)
+```
+       
+
+		
+```{r}
+all$BsmtFinType1[is.na(all$BsmtFinType1)] <- 'None'
+FinType <- c('None'=0, 'Unf'=1, 'LwQ'=2, 'Rec'=3, 'BLQ'=4, 'ALQ'=5, 'GLQ'=6)
+
+all$BsmtFinType1<-as.integer(revalue(all$BsmtFinType1, FinType))
+table(all$BsmtFinType1)
+```
+
+
+
+```{r}
+all$BsmtFinType2[is.na(all$BsmtFinType2)] <- 'None'
+FinType <- c('None'=0, 'Unf'=1, 'LwQ'=2, 'Rec'=3, 'BLQ'=4, 'ALQ'=5, 'GLQ'=6)
+
+all$BsmtFinType2<-as.integer(revalue(all$BsmtFinType2, FinType))
+table(all$BsmtFinType2)
+```
+
+
+
+```{r}
+all$BsmtFullBath[is.na(all$BsmtFullBath)] <-0
+table(all$BsmtFullBath)
+```
+
+
+```{r}
+all$BsmtHalfBath[is.na(all$BsmtHalfBath)] <-0
+table(all$BsmtHalfBath)
+```
+
+```{r}
+all$BsmtFinSF1[is.na(all$BsmtFinSF1)] <-0
+```
+
+
+```{r}
+all$BsmtFinSF2[is.na(all$BsmtFinSF2)] <-0
+```
+
+
+```{r}
+all$BsmtUnfSF[is.na(all$BsmtUnfSF)] <-0
+```
+
+
+```{r}
+all$TotalBsmtSF[is.na(all$TotalBsmtSF)] <-0
+```
+
+
+```{r}
+#8
+length(which(is.na(all$MasVnrType) & is.na(all$MasVnrArea)))
+
+#find the one that should have a MasVnrType
+all[is.na(all$MasVnrType) & !is.na(all$MasVnrArea), c('MasVnrType', 'MasVnrArea')]  #0
+```
+
+
+
+```{r}
+all$MasVnrType[is.na(all$MasVnrType)] <- 'None'
+```
+
+
+```{r}
+Masonry <- c('None'=0, 'BrkCmn'=0, 'BrkFace'=1, 'Stone'=2)
+all$MasVnrType<-as.integer(revalue(all$MasVnrType, Masonry))
+table(all$MasVnrType)
+```
+
+
+```{r}
+all$MasVnrArea[is.na(all$MasVnrArea)] <-0
+```
+
+
+
+```{r}
+all$MSZoning <- as.factor(all$MSZoning)
+table(all$MSZoning)
+sum(table(all$MSZoning))
+```
+
+
+ 
+```{r, message=FALSE}
+all$KitchenQual<-as.integer(revalue(all$KitchenQual, Qualities))
+table(all$KitchenQual)
+sum(table(all$KitchenQual))
+```
+
+
+```{r}
+table(all$KitchenAbvGr)
+sum(table(all$KitchenAbvGr))
+```
+
+
+```{r, message=FALSE}
+table(all$Utilities)
+all$Utilities <- NULL  #this variable does not help us at all, 1459 rows have AllPub and 1 has NoSewa
+```
+
+
+
+```{r, message=FALSE}
+all$Functional <- as.integer(revalue(all$Functional, c('Sal'=0, 'Sev'=1, 'Maj2'=2, 'Maj1'=3, 'Mod'=4, 'Min2'=5, 'Min1'=6, 'Typ'=7)))
+table(all$Functional)
+sum(table(all$Functional))
+```
+
+
+```{r}
+all$Exterior1st <- as.factor(all$Exterior1st)
+table(all$Exterior1st)
+sum(table(all$Exterior1st))
+```
+
+
+```{r}
+all$Exterior2nd <- as.factor(all$Exterior2nd)
+table(all$Exterior2nd)
+sum(table(all$Exterior2nd))
+```
+
+
+       
+```{r}
+all$ExterQual<-as.integer(revalue(all$ExterQual, Qualities))
+table(all$ExterQual)
+sum(table(all$ExterQual))
+```
+
+
+
+```{r}
+all$ExterCond<-as.integer(revalue(all$ExterCond, Qualities))
+table(all$ExterCond)
+sum(table(all$ExterCond))
+```
+
+
+
+```{r}
+#imputing mode
+all$Electrical[is.na(all$Electrical)] <- names(sort(-table(all$Electrical)))[1]
+
+all$Electrical <- as.factor(all$Electrical)
+table(all$Electrical)
+sum(table(all$Electrical))
+```
+
+
+```{r}
+all$SaleType <- as.factor(all$SaleType)
+table(all$SaleType)
+sum(table(all$SaleType))
+```
+
+
+```{r}
+all$SaleCondition <- as.factor(all$SaleCondition)
+table(all$SaleCondition)
+sum(table(all$SaleCondition))
+```
+
+
+```{r}
+Charcol <- names(all[,sapply(all, is.character)])
+Charcol
+cat('There are', length(Charcol), 'remaining columns with character values')
+```
+
+
+```{r}
+#No ordinality, so converting into factors
+all$Foundation <- as.factor(all$Foundation)
+table(all$Foundation)
+sum(table(all$Foundation))
+```
+
+
+       
+```{r}
+#No ordinality, so converting into factors
+all$Heating <- as.factor(all$Heating)
+table(all$Heating)
+sum(table(all$Heating))
+```
+
+
+       
+```{r}
+#making the variable ordinal using the Qualities vector
+all$HeatingQC<-as.integer(revalue(all$HeatingQC, Qualities))
+table(all$HeatingQC)
+sum(table(all$HeatingQC))
+```
+
+
+```{r}
+all$CentralAir<-as.integer(revalue(all$CentralAir, c('N'=0, 'Y'=1)))
+table(all$CentralAir)
+sum(table(all$CentralAir))
+```
+
+
+
+```{r}
+#No ordinality, so converting into factors
+all$RoofStyle <- as.factor(all$RoofStyle)
+table(all$RoofStyle)
+sum(table(all$RoofStyle))
+```
+		
+
+
+```{r}
+#No ordinality, so converting into factors
+all$RoofMatl <- as.factor(all$RoofMatl)
+table(all$RoofMatl)
+sum(table(all$RoofMatl))
+```
+
+
+
+```{r}
+#No ordinality, so converting into factors
+all$LandContour <- as.factor(all$LandContour)
+table(all$LandContour)
+sum(table(all$LandContour))
+```
+       
+
+
+```{r}
+#Ordinal, so label encoding
+all$LandSlope<-as.integer(revalue(all$LandSlope, c('Sev'=0, 'Mod'=1, 'Gtl'=2)))
+table(all$LandSlope)
+sum(table(all$LandSlope))
+```
+
+
+```{r}
+#No ordinality, so converting into factors
+all$BldgType <- as.factor(all$BldgType)
+table(all$BldgType)
+sum(table(all$BldgType))
+```
+	
+
+
+```{r}
+#No ordinality, so converting into factors
+all$HouseStyle <- as.factor(all$HouseStyle)
+table(all$HouseStyle)
+sum(table(all$HouseStyle))
+```
+
+
+
+```{r}
+#No ordinality, so converting into factors
+all$Neighborhood <- as.factor(all$Neighborhood)
+table(all$Neighborhood)
+sum(table(all$Neighborhood))
+```
+
+
+
+```{r}
+#No ordinality, so converting into factors
+all$Condition1 <- as.factor(all$Condition1)
+table(all$Condition1)
+sum(table(all$Condition1))
+```
+	
+
+```{r}
+#No ordinality, so converting into factors
+all$Condition2 <- as.factor(all$Condition2)
+table(all$Condition2)
+sum(table(all$Condition2))
+```
+
+
+```{r}
+#Ordinal, so label encoding
+all$Street<-as.integer(revalue(all$Street, c('Grvl'=0, 'Pave'=1)))
+table(all$Street)
+sum(table(all$Street))
+```
+       
+
+
+```{r}
+#Ordinal, so label encoding
+all$PavedDrive<-as.integer(revalue(all$PavedDrive, c('N'=0, 'P'=1, 'Y'=2)))
+table(all$PavedDrive)
+sum(table(all$PavedDrive))
+```
+
+
+
+```{r}
+str(all$YrSold)
+str(all$MoSold)
+all$MoSold <- as.factor(all$MoSold)
+```
+
+
+```{r}
+str(all$MSSubClass)
+
+all$MSSubClass <- as.factor(all$MSSubClass)
+
+#revalue for better readability
+all$MSSubClass<-revalue(all$MSSubClass, c('20'='1 story 1946+', '30'='1 story 1945-', '40'='1 story unf attic', '45'='1,5 story unf', '50'='1,5 story fin', '60'='2 story 1946+', '70'='2 story 1945-', '75'='2,5 story all ages', '80'='split/multi level', '85'='split foyer', '90'='duplex all style/age', '120'='1 story PUD 1946+', '150'='1,5 story PUD all', '160'='2 story PUD 1946+', '180'='PUD multilevel', '190'='2 family conversion'))
+
+str(all$MSSubClass)
+```
+
+
+
+```{r}
+numericVars <- which(sapply(all, is.numeric)) #index vector numeric variables
+factorVars <- which(sapply(all, is.factor)) #index vector factor variables
+cat('There are', length(numericVars), 'numeric variables, and', length(factorVars), 'categoric variables')
+```
+
+
+
+```{r, out.width="100%"}
+all_numVar <- all[, numericVars]
+cor_numVar <- cor(all_numVar, use="pairwise.complete.obs") #correlations of all numeric variables
+
+#sort on decreasing correlations with SalePrice
+cor_sorted <- as.matrix(sort(cor_numVar[,'SalePrice'], decreasing = TRUE))
+ #select only high corelations
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.5)))
+cor_numVar <- cor_numVar[CorHigh, CorHigh]
+
+corrplot.mixed(cor_numVar, tl.col="black", tl.pos = "lt", tl.cex = 0.7,cl.cex = .7, number.cex=.7)
+```
+
+
+#Feature engineering
+
+##Total number of Bathrooms
+
+There are 4 bathroom variables. Individually, these variables are not very important. However, I assume that I if I add them up into one predictor, this predictor is likely to become a strong one.
+
+"A half-bath, also known as a powder room or guest bath, has only two of the four main bathroom components-typically a toilet and sink." Consequently, I will also count the half bathrooms as half.
+
+```{r}
+all$TotBathrooms <- all$FullBath + (all$HalfBath*0.5) + all$BsmtFullBath + (all$BsmtHalfBath*0.5)
+```
+
+As you can see in the first graph, there now seems to be a clear correlation (it's 0.63). The frequency distribution of Bathrooms in all data is shown in the second graph.
+
+
+```{r}
+all$Remod <- ifelse(all$YearBuilt==all$YearRemodAdd, 0, 1) #0=No Remodeling, 1=Remodeling
+all$Age <- as.numeric(all$YrSold)-all$YearRemodAdd
+```
+
+
+```{r}
+all$IsNew <- ifelse(all$YrSold==all$YearBuilt, 1, 0)
+table(all$IsNew)
+```
+
+
+```{r}
+all$YrSold <- as.factor(all$YrSold) #the numeric version is now not needed anymore
+```
+
+##Binning Neighborhood
+
+
+Both the median and mean Saleprices agree on 3 neighborhoods with substantially higher saleprices. The separation of the 3 relatively poor neighborhoods is less clear, but at least both graphs agree on the same 3 poor neighborhoods. Since I do not want to 'overbin', I am only creating categories for those 'extremes'.
+
+```{r}
+all$NeighRich[all$Neighborhood %in% c('StoneBr', 'NridgHt', 'NoRidge')] <- 2
+all$NeighRich[!all$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale', 'StoneBr', 'NridgHt', 'NoRidge')] <- 1
+all$NeighRich[all$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale')] <- 0
+```
+
+```{r}
+table(all$NeighRich)
+```
+
+##Total Square Feet
+
+As the total living space generally is very important when people buy houses, I am adding a predictors that adds up the living space above and below ground.
+
+```{r}
+all$TotalSqFeet <- all$GrLivArea + all$TotalBsmtSF
+```
+
+
+##Consolidating Porch variables
+
+
+
+```{r}
+all$TotalPorchSF <- all$OpenPorchSF + all$EnclosedPorch + all$X3SsnPorch + all$ScreenPorch
+```
+
+
+##Dropping highly correlated variables
+
+First of all, I am dropping a variable if two variables are highly correlated. To find these correlated pairs, I have used the correlations matrix again (see section 6.1). For instance: GarageCars and GarageArea have a correlation of 0.89. Of those two, I am dropping the variable with the lowest correlation with SalePrice (which is GarageArea with a SalePrice correlation of 0.62. GarageCars has a SalePrice correlation of 0.64).
+
+```{r}
+dropVars <- c('YearRemodAdd', 'GarageYrBlt', 'GarageArea', 'GarageCond', 'TotalBsmtSF', 'TotalRmsAbvGrd', 'BsmtFinSF1')
+
+all <- all[,!(names(all) %in% dropVars)]
+```
+
+
+
+
+##PreProcessing predictor variables
+
+
+```{r}
+numericVars <- which(sapply(all, is.numeric)) #index vector numeric variables
+numericVarNames <- names(numericVars) #saving names vector for use later on
+cat('There are', length(numericVars), 'numeric variables')
+```
+
+
+```{r}
+numericVarNames <- numericVarNames[!(numericVarNames %in% c('MSSubClass', 'MoSold', 'YrSold', 'SalePrice', 'OverallQual', 'OverallCond'))] #numericVarNames was created before having done anything
+numericVarNames <- append(numericVarNames, c('Age', 'TotalPorchSF', 'TotBathrooms', 'TotalSqFeet'))
+
+DFnumeric <- all[, names(all) %in% numericVarNames]
+
+DFfactors <- all[, !(names(all) %in% numericVarNames)]
+DFfactors <- DFfactors[, names(DFfactors) != 'SalePrice']
+
+cat('There are', length(DFnumeric), 'numeric variables, and', length(DFfactors), 'factor variables')
+```
+
+###Skewness and normalizing of the numeric predictors
+
+**Skewness**
+
+```{r}
+for(i in 1:ncol(DFnumeric)){
+        if (abs(skew(DFnumeric[,i]))>0.8){
+                DFnumeric[,i] <- log(DFnumeric[,i] +1)
+        }
+}
+```
+
+**Normalizing the data**
+```{r}
+PreNum <- preProcess(DFnumeric, method=c("center", "scale"))
+print(PreNum)
+```
+```{r}
+DFnorm <- predict(PreNum, DFnumeric)
+dim(DFnorm)
+```
+
+###One hot encoding the categorical variables
+
+The last step needed to ensure that all predictors are converted into numeric columns (which is required by most Machine Learning algorithms) is to 'one-hot encode' the categorical variables. This basically means that all (not ordinal) factor values are getting a seperate colums with 1s and 0s (1 basically means Yes/Present). To do this one-hot encoding, I am using the `model.matrix()` function.
+
+```{r}
+DFdummies <- as.data.frame(model.matrix(~.-1, DFfactors))
+dim(DFdummies)
+```
+
+###Removing levels with few or no observations in train or test
+
+
+```{r}
+#check if some values are absent in the test set
+ZerocolTest <- which(colSums(DFdummies[(nrow(all[!is.na(all$SalePrice),])+1):nrow(all),])==0)
+colnames(DFdummies[ZerocolTest])
+DFdummies <- DFdummies[,-ZerocolTest] #removing predictors
+```
+
+```{r}
+#check if some values are absent in the train set
+ZerocolTrain <- which(colSums(DFdummies[1:nrow(all[!is.na(all$SalePrice),]),])==0)
+colnames(DFdummies[ZerocolTrain])
+DFdummies <- DFdummies[,-ZerocolTrain] #removing predictor
+```
+
+Also taking out variables with less than 10 'ones' in the train set.
+
+```{r}
+fewOnes <- which(colSums(DFdummies[1:nrow(all[!is.na(all$SalePrice),]),])<10)
+colnames(DFdummies[fewOnes])
+DFdummies <- DFdummies[,-fewOnes] #removing predictors
+dim(DFdummies)
+```
+
+
+```{r}
+combined <- cbind(DFnorm, DFdummies) #combining all (now numeric) predictors into one dataframe 
+```
+
+##Dealing with skewness of response variable
+
+```{r}
+skew(all$SalePrice)
+```
+
+```{r}
+qqnorm(all$SalePrice)
+qqline(all$SalePrice)
+```
+
+
+```{r}
+all$SalePrice <- log(all$SalePrice) #default is the natural logarithm, "+1" is not necessary as there are no 0's
+skew(all$SalePrice)
+```
+
+The skew is now quite low and the Q-Q plot is also looking much better.
+
+```{r}
+qqnorm(all$SalePrice)
+qqline(all$SalePrice)
+```
+
+##Composing train and test sets
+
+```{r}
+train1 <- combined[!is.na(all$SalePrice),]
+test1 <- combined[is.na(all$SalePrice),]
+```
+
+
+##Data Exploration and Visualization
+
+**Neighborhood
+```{r}
+train %>% ggplot(aes(x=Neighborhood,y=SalePrice))+geom_boxplot()+ggtitle("Distribution of Sale Price by Neighborhood")+theme(axis.text.x = element_text(angle=30),axis.title.x = element_text(vjust=-.1))+theme(title = element_text(face = "bold"))+scale_y_continuous(labels=comma)
+```
+
+```{r}
+hist(train$SalePrice)
+```
+
+
+```{r}
+train %>% ggplot(aes(x=log(SalePrice)))+geom_histogram()+scale_x_continuous(labels = comma)
+```
+
+```{r}
+#TOTAL Bathrooms Scatterplot vs. response
+#Overall Qual. Scatterplot vs. response
+par(mfrow=c(1,2))
+plot(log(all$SalePrice) ~ all$TotBathrooms, pch=19, ylab="Sale Price", xlab="Total # of Bathrooms", main="Sale Price vs. Total # of Bathrooms", data = all[1:1060,])
+
+plot(log(all$SalePrice)~all$OverallQual, pch=19, ylab="Sale Price", xlab="Overall Quality", main="Sale Price vs. Overall Quality", data = all[1:1060,])
+```
+
+
+```{r}
+all[1:1060,] %>% ggplot(aes(x=TotalSqFeet,y=SalePrice))+geom_point()
+```
+
+
+#Modeling
+
+```{r}
+#Spliting training set into two parts based on outcome: 70% and 30%
+
+data_train <-cbind(train1,all$SalePrice[1:1060])
+colnames(data_train) [172] <-"train_log_sale_price"
+training <- data_train
+data_test <-cbind(test1,true_test_log_price)
+testing <- data_test
+colnames(data_test) [172] <-"test_log_sale_price"
+set.seed(222)
+inTrain <- createDataPartition(y = training$train_log_sale_price, p = 0.7, list = FALSE)
+train <- training[inTrain, ]
+Validation <- training[-inTrain, ]
+```
+
+##General Linear Model with our Research Variables
+
+
+#General Linear Model on training subset
+
+
+
+```{r}
+glm = lm(train_log_sale_price~GrLivArea+TotBathrooms+GarageCars+NeighborhoodBrDale+NeighborhoodBrkSide
+            +NeighborhoodClearCr+NeighborhoodCollgCr+NeighborhoodCrawfor+NeighborhoodEdwards+NeighborhoodGilbert 
+            +NeighborhoodIDOTRR+NeighborhoodMeadowV+NeighborhoodMitchel+NeighborhoodNAmes+NeighborhoodNoRidge
+            +NeighborhoodNridgHt+NeighborhoodNWAmes+NeighborhoodOldTown+NeighborhoodSawyer+NeighborhoodSawyerW  
+            +NeighborhoodSomerst+NeighborhoodStoneBr+NeighborhoodSWISU+NeighborhoodTimber+OverallQual,data=train)
+summary(glm)
+
+par(mfrow=c(1,1))
+plot(glm,pch=20, which=c(1))
+plot(glm,pch=20, which=c(2))
+```
+
+```{r}
+dim(Validation)
+
+dim(train)
+## General Linear Model Prediction on validation set
+pred <- predict(glm, newdata = Validation)
+rmse(exp(Validation$train_log_sale_price), exp(pred))
+```
+
+
+GLM on Full Training Set
+```{r}
+glm2 = lm(train_log_sale_price~GrLivArea+TotBathrooms+ GarageCars+NeighborhoodBrDale+NeighborhoodBrkSide
+         +NeighborhoodClearCr+NeighborhoodCollgCr+NeighborhoodCrawfor+NeighborhoodEdwards+NeighborhoodGilbert 
+         +NeighborhoodIDOTRR+NeighborhoodMeadowV+NeighborhoodMitchel+NeighborhoodNAmes+NeighborhoodNoRidge
+         +NeighborhoodNridgHt+NeighborhoodNWAmes+NeighborhoodOldTown+NeighborhoodSawyer+NeighborhoodSawyerW         
+         +NeighborhoodSomerst+NeighborhoodStoneBr+NeighborhoodSWISU+NeighborhoodTimber+OverallQual, data=training)
+summary(glm2)
+par(mfrow=c(2,1))
+plot(glm2,pch=20, which=c(1))
+plot(glm2,pch=20, which=c(2))
+
+## General Linear Model Prediction on testing set
+pred4 <- predict(glm2, newdata = testing)
+rmse(true_test_price, exp(pred4))
+
+```
+
+##Random forest with Research Variables
+```{r}
+set.seed(222)
+Rf_model <- randomForest(train_log_sale_price~GarageCars+GrLivArea+OverallQual+NeighborhoodBrDale+NeighborhoodBrkSide+NeighborhoodClearCr+NeighborhoodCollgCr+NeighborhoodCrawfor+NeighborhoodEdwards+NeighborhoodGilbert +NeighborhoodIDOTRR+NeighborhoodMeadowV+NeighborhoodMitchel+NeighborhoodNAmes+NeighborhoodNoRidge +NeighborhoodNridgHt+NeighborhoodNWAmes+NeighborhoodOldTown+NeighborhoodSawyer+NeighborhoodSawyerW +NeighborhoodSomerst+NeighborhoodStoneBr+NeighborhoodSWISU+NeighborhoodTimber, data=train)
+
+print(Rf_model)
+
+predictions_rf <- predict(Rf_model, as.matrix(Validation)) # predictions
+
+(rmse_rf <- RMSE(predictions_rf,(Validation$train_log_sale_price)) )
+(mse_rf <- MSE(predictions_rf,(Validation$train_log_sale_price)) )
+( bias_rf <-mean(predictions_rf-(Validation$train_log_sale_price)) )
+( max_dev_rf <-max(abs(predictions_rf-(Validation$train_log_sale_price)) ))
+( mean_dev_rf <-mean(abs(predictions_rf-(Validation$train_log_sale_price))))
+
+(rmse_rf <- RMSE(exp(predictions_rf),exp(Validation$train_log_sale_price)) )
+
+
+```
+
+```{r}
+set.seed(222)
+Rf_model2 <- randomForest(train_log_sale_price~GarageCars+GrLivArea+OverallQual+NeighborhoodBrDale+NeighborhoodBrkSide+NeighborhoodClearCr+NeighborhoodCollgCr+NeighborhoodCrawfor+NeighborhoodEdwards+NeighborhoodGilbert +NeighborhoodIDOTRR+NeighborhoodMeadowV+NeighborhoodMitchel+NeighborhoodNAmes+NeighborhoodNoRidge +NeighborhoodNridgHt+NeighborhoodNWAmes+NeighborhoodOldTown+NeighborhoodSawyer+NeighborhoodSawyerW +NeighborhoodSomerst+NeighborhoodStoneBr+NeighborhoodSWISU+NeighborhoodTimber, data=training)
+
+print(Rf_model2)
+
+predictions_rf2 <- predict(Rf_model2, as.matrix(testing)) # predictions on test set
+
+(rmse_rf <- RMSE(predictions_rf2,(true_test_log_price)) )
+(mse_rf <- MSE(predictions_rf2,(true_test_log_price)) )
+( bias_rf <-mean(predictions_rf2-(true_test_log_price)) )
+( max_dev_rf <-max(abs(predictions_rf2-(true_test_log_price)) ))
+( mean_dev_rf <-mean(abs(predictions_rf2-(true_test_log_price))))
+
+(rmse_rf <- RMSE(exp(predictions_rf2),exp(true_test_log_price)) )
+
+cart=rpart(train_log_sale_price~GarageCars+GrLivArea+OverallQual+NeighborhoodBrDale+NeighborhoodBrkSide+NeighborhoodClearCr+NeighborhoodCollgCr+NeighborhoodCrawfor+NeighborhoodEdwards+NeighborhoodGilbert +NeighborhoodIDOTRR+NeighborhoodMeadowV+NeighborhoodMitchel+NeighborhoodNAmes+NeighborhoodNoRidge +NeighborhoodNridgHt+NeighborhoodNWAmes+NeighborhoodOldTown+NeighborhoodSawyer+NeighborhoodSawyerW +NeighborhoodSomerst+NeighborhoodStoneBr+NeighborhoodSWISU+NeighborhoodTimber, data=training, method = "anova")
+
+rpart.plot(cart, box.palette="GnBu", branch.lty=3, shadow.col="gray", nn=TRUE)
+```
+##Lasso regression model
+
+
+
+```{r}
+set.seed(27042018)
+my_control <-trainControl(method="cv", number=5)
+lassoGrid <- expand.grid(alpha = 1, lambda = seq(0.001,0.1,by = 0.0005))
+
+lasso_mod <- train(x=subset(train,select=-c(train_log_sale_price)), y=train$train_log_sale_price, method='glmnet', trControl= my_control, tuneGrid=lassoGrid) 
+lasso_mod$bestTune
+min(lasso_mod$results$RMSE)
+```
+
+
+```{r}
+lassoVarImp <- varImp(lasso_mod,scale=F)
+lassoImportance <- lassoVarImp$importance
+
+varsSelected <- length(which(lassoImportance$Overall!=0))
+varsNotSelected <- length(which(lassoImportance$Overall==0))
+
+cat('Lasso uses', varsSelected, 'variables in its model, and did not select', varsNotSelected, 'variables.')
+```
+
+```{r}
+plot(lasso_mod,xvar="lambda")
+```
+
+```{r}
+LassoPred <- predict(lasso_mod, Validation)
+predictions_lasso <- exp(LassoPred) #need to reverse the log to the real values
+head(predictions_lasso)
+
+
+
+#validation prediction accuracy
+(rmse_lasso <- RMSE(predictions_lasso,exp(Validation$train_log_sale_price)) )
+(mse_lasso <- MSE(predictions_lasso,exp(Validation$train_log_sale_price)) )
+( bias_lasso <-mean(predictions_lasso-exp(Validation$train_log_sale_price)) )
+( max_dev_lasso <-max(abs(predictions_lasso-exp(Validation$train_log_sale_price)) ))
+( mean_dev_lasso <-mean(abs(predictions_lasso-exp(Validation$train_log_sale_price))))
+
+```
+
+```{r}
+lassoVarImp
+plot(lassoVarImp)
+
+
+lassimp <-as.data.frame(lassoImportance)
+lassimp$Variable <-rownames(lassimp)
+lassimp <- lassimp[,c(2,1)]
+lassimp <-lassimp[order(lassimp$Overall, decreasing = TRUE),]
+
+
+
+
+lassimp[1:30,] %>% ggplot(aes(x=reorder(Variable,Overall),y=Overall))+scale_y_continuous("Variable Importance",limits=c(0,1))+geom_bar(stat = "identity")+coord_flip()+labs(y="Variable")+ggtitle("Top 30 Variables in Order of Importance")
+```
+
+
+```{r}
+set.seed(27042018)
+my_control2 <-trainControl(method="cv", number=5)
+lassoGrid2 <- expand.grid(alpha = 1, lambda = seq(0.001,0.1,by = 0.0005))
+
+lasso_mod2 <- train(x=subset(training,select=-c(train_log_sale_price)), y=training$train_log_sale_price, method='glmnet', trControl= my_control2, tuneGrid=lassoGrid2) 
+lasso_mod2$bestTune
+min(lasso_mod2$results$RMSE)
+```
+
+
+```{r}
+lassoVarImp2 <- varImp(lasso_mod2,scale=F)
+lassoImportance2 <- lassoVarImp2$importance
+
+varsSelected2 <- length(which(lassoImportance2$Overall!=0))
+varsNotSelected2 <- length(which(lassoImportance2$Overall==0))
+
+cat('Lasso uses', varsSelected2, 'variables in its model, and did not select', varsNotSelected2, 'variables.')
+```
+
+
+```{r}
+LassoPred2 <- predict(lasso_mod2, testing)
+predictions_lasso2 <- exp(LassoPred2) #need to reverse the log to the real values
+head(predictions_lasso2)
+
+
+
+#test prediction accuracy
+(rmse_lasso <- RMSE(predictions_lasso2,true_test_price ))
+(mse_lasso <- MSE(predictions_lasso2,true_test_price ))
+( bias_lasso <-mean(predictions_lasso2-true_test_price ))
+( max_dev_lasso <-max(abs(predictions_lasso2-true_test_price)))
+( mean_dev_lasso <-mean(abs(predictions_lasso2-true_test_price)))
+
+```
+
+
+
+
+```{r}
+df <-as.data.frame(cbind(predictions_lasso2, true_test_price))
+
+
+df$errors <-df$true_test_price-df$predictions_lasso2
+
+
+df$id <-1:400
+
+df <-df %>% pivot_longer(cols=c("predictions_lasso2","true_test_price","errors"),values_to = "value")
+
+df$name <-as.factor(df$name)
+
+lasso_residuals <-df[df$name=="errors",]
+
+
+df <-df[df$name!="errors",]
+
+
+
+df %>% ggplot(aes(x=id,y=value,group=id))+geom_point(aes(colour=name))+ggtitle("Lasso Predictions vs Actual Test Sales Price") +geom_line(aes(group=id))+scale_color_discrete(name="Value", breaks=c("true_test_price","exp_pred_lasso"),labels=c("Actual Sale Price","Predicted Sale Price"))+labs(y="Sales Price", x="Test Observation")+scale_y_continuous(labels = comma)
+
+
+
+
+lasso_residuals %>% ggplot(aes(x=id,y=value))+geom_point()+ggtitle("Lasso Residuals")+geom_hline(yintercept = 0, colour="red")+scale_y_continuous(labels=comma)
+
+```
+
+
+##XGBoost model
+
+
+```{r}
+xgb_grid = expand.grid(
+nrounds = 1000,
+eta = c(0.1, 0.05, 0.01),
+max_depth = c(2, 3, 4, 5, 6),
+gamma = 0,
+colsample_bytree=1,
+min_child_weight=c(1, 2, 3, 4 ,5),
+subsample=1
+)
+```
+
+
+```{r}
+label_train <- train$train_log_sale_price
+label_val <-Validation$train_log_sale_price
+label_training <-training$train_log_sale_price
+label_testing <-testing$true_test_log_price
+
+
+# put our testing & training data into two seperates Dmatrixs objects
+dtrain <- xgb.DMatrix(data = as.matrix(train[,-172]), label= label_train)
+dtest <- xgb.DMatrix(data = as.matrix(Validation[,-172]),label=label_val)
+dtraining <-xgb.DMatrix(data = as.matrix(training[,-172]), label= label_training)
+dtesting <-xgb.DMatrix(data=as.matrix(testing[,-172]),label=true_test_log_price)
+```
+
+
+
+```{r}
+default_param<-list(
+        objective = "reg:linear",
+        booster = "gbtree",
+        eta=0.05, #default = 0.3
+        gamma=0,
+        max_depth=3, #default=6
+        min_child_weight=4, #default=1
+        subsample=1,
+        colsample_bytree=1
+)
+```
+
+The next step is to do cross validation to determine the best number of rounds (for the given set of parameters). 
+
+```{r}
+xgbcv <- xgb.cv( params = default_param, data = dtrain, nrounds = 500, nfold = 5, showsd = T, stratified = T, print_every_n = 40, early_stopping_rounds = 10, maximize = F)
+```
+
+
+```{r}
+set.seed(222)
+#train the model using the best iteration found by cross validation
+xgb_mod <- xgb.train(data = dtrain, params=default_param, nrounds = 330)
+
+```
+
+```{r}
+XGBpred <- predict(xgb_mod, dtest)
+predictions_XGB <- exp(XGBpred) #need to reverse the log to the real values
+head(predictions_XGB)
+
+(rmse_XGB <- RMSE(predictions_XGB,exp(Validation$train_log_sale_price)) )
+(mse_XGB <- MSE(predictions_XGB,exp(Validation$train_log_sale_price)) )
+( bias_XGB <-mean(predictions_XGB-exp(Validation$train_log_sale_price)) )
+( max_dev_XGB <-max(abs(predictions_XGB-exp(Validation$train_log_sale_price)) ))
+( mean_dev_XGB <-mean(abs(predictions_XGB-exp(Validation$train_log_sale_price)) ))
+
+```
+
+
+
+```{r, out.width="100%"}
+#view variable importance plot
+ #required for ggplot clustering
+mat <- xgb.importance (feature_names = colnames(train),model = xgb_mod)
+xgb.ggplot.importance(importance_matrix = mat[1:20], rel_to_first = TRUE)
+```
+
+
+
+
+```{r}
+set.seed(222)
+#train the model using the best iteration found by cross validation
+xgb_mod2 <- xgb.train(data = dtraining, params=default_param, nrounds = 330)
+
+```
+
+```{r}
+XGBpred2 <- predict(xgb_mod2, dtesting)
+predictions_XGB2 <- exp(XGBpred2) #need to reverse the log to the real values
+head(predictions_XGB2)
+
+(rmse_XGB <- RMSE(predictions_XGB2,exp(testing$true_test_log_price)) )
+(mse_XGB <- MSE(predictions_XGB2,exp(testing$true_test_log_price)) )
+( bias_XGB <-mean(predictions_XGB2-exp(testing$true_test_log_price)) )
+( max_dev_XGB <-max(abs(predictions_XGB2-exp(testing$true_test_log_price)) ))
+( mean_dev_XGB <-mean(abs(predictions_XGB2-exp(testing$true_test_log_price)) ))
+
+```
+
+
+
+```{r}
+df <-as.data.frame(cbind(predictions_XGB2, true_test_price))
+
+
+df$errors <-df$true_test_price-df$predictions_XGB2
+
+
+df$id <-1:400
+
+df <-df %>% pivot_longer(cols=c("predictions_XGB2","true_test_price","errors"),values_to = "value")
+
+df$name <-as.factor(df$name)
+
+xgb_residuals <-df[df$name=="errors",]
+
+
+df <-df[df$name!="errors",]
+
+
+
+df %>% ggplot(aes(x=id,y=value,group=id))+geom_point(aes(colour=name))+ggtitle("XGBoost Predictions vs Actual Test Sales Price") +geom_line(aes(group=id))+scale_color_discrete(name="Value", breaks=c("true_test_price","predictions_XGB2"),labels=c("Actual Sale Price","Predicted Sale Price"))+labs(y="Sales Price", x="Test Observation")+scale_y_continuous(labels = comma)
+
+
+
+
+xgb_residuals %>% ggplot(aes(x=id,y=value))+geom_point()+ggtitle("XGBoost Residuals")+geom_hline(yintercept = 0, colour="red")+scale_y_continuous(limits=c(-100000,100000),labels=comma)
+
+```
